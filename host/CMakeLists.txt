@@ -105,6 +105,7 @@ add_executable(ConkerRecomp
     src/mod_api.cpp
     src/rom_versions.cpp
     src/widescreen.cpp
+    src/stereo.cpp
     src/cutscene_aspect.cpp
     src/grey_frame.cpp
     src/field_of_view.cpp
@@ -112,6 +113,7 @@ add_executable(ConkerRecomp
     src/model_detail.cpp
     src/shadow_smoothing.cpp
     src/render_fixes.cpp
+    src/skip.cpp
     src/more_bots.cpp
     src/look_aim.cpp
     src/mouse_camera.cpp
@@ -231,6 +233,29 @@ if (CONKER_RT64)
         "${RT64_DIR}/src/contrib/nativefiledialog-extended/src/include"
     )
     target_link_libraries(ConkerRecomp PRIVATE rt64)
+
+    # Conker: Leia SR (Simulated Reality) autostereoscopic output. The SDK binding is
+    # conker_leia_sr.dll (leia/conker_leia_sr.cpp), which RT64 loads at run time from next
+    # to the executable: neither the executable nor RT64 links anything of the SDK. The DLL
+    # is built against libs/SR-lib (the SDK's CMake package: import libraries only, the SR
+    # runtime stays in the user's SR Platform install) and delay-loads the SR DLLs, so it
+    # loads, and fails its create() cleanly, on machines without the SR Platform. Without
+    # libs/SR-lib no DLL is built and the Leia SR mode presents a plain side-by-side pair.
+    if (WIN32 AND EXISTS "${REPO_ROOT}/libs/SR-lib/CMakeLists.txt")
+        add_subdirectory("${REPO_ROOT}/libs/SR-lib" "${CMAKE_CURRENT_BINARY_DIR}/SR-lib")
+    endif()
+    if (SRLIB_FOUND)
+        add_library(conker_leia_sr SHARED leia/conker_leia_sr.cpp)
+        target_include_directories(conker_leia_sr PRIVATE "${RT64_DIR}/src")
+        target_link_libraries(conker_leia_sr PRIVATE SRLib::SR d3d12)
+        target_compile_definitions(conker_leia_sr PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        srlib_apply_delayload(conker_leia_sr)
+        # Built with the game (it lands next to the executable, where RT64 looks for it).
+        add_dependencies(ConkerRecomp conker_leia_sr)
+        # The SR panel tester's launcher, which logs the run to leia-log.txt.
+        add_custom_command(TARGET ConkerRecomp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/leia/leia_test.cmd" "$<TARGET_FILE_DIR:ConkerRecomp>")
+    endif()
 
     if (WIN32)
         set(SDL2_DIR "${RT64_DIR}/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3")

@@ -867,10 +867,27 @@ index c89956e..4699451 100644
              if (controllers == config_json.end() || !controllers->is_array()) {
                  return false;
 diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
-index 38b84f5..6908bea 100644
+index 38b84f5..a760251 100644
 --- a/recompui/include/recompui/config.h
 +++ b/recompui/include/recompui/config.h
-@@ -145,6 +145,10 @@ namespace recompui {
+@@ -61,6 +61,16 @@ namespace recompui {
+                 inline const std::string hpfb_option = "hpfb_option";
+                 inline const std::string rr_manual_value = "rr_manual_value";
+                 inline const std::string ds_option = "ds_option";
++                // Conker: stereoscopy.
++                inline const std::string stereo_mode_option = "stereo_mode_option";
++                inline const std::string stereo_separation_option = "stereo_separation_option";
++                // Internal (hidden): whether the separation value has been migrated to
++                // the percent schema. See apply_graphics_config.
++                inline const std::string stereo_separation_percent_schema = "stereo_separation_percent_schema";
++                inline const std::string stereo_convergence_option = "stereo_convergence_option";
++                inline const std::string stereo_auto_convergence_option = "stereo_auto_convergence_option";
++                inline const std::string stereo_gamma_option = "stereo_gamma_option";
++                inline const std::string stereo_hud_depth_option = "stereo_hud_depth_option";
+             }
+     
+             void update_msaa_supported(bool supported);
+@@ -145,6 +155,10 @@ namespace recompui {
  
          // Get any added config by ID.
          recomp::config::Config &get_config(const std::string &id);
@@ -943,10 +960,18 @@ index 33f79ab..0a3ae42 100644
              uint32_t get_display_framerate() const override;
              float get_resolution_scale() const override;
 diff --git a/recompui/src/base/ui_state.cpp b/recompui/src/base/ui_state.cpp
-index 277a421..980291d 100644
+index 277a421..48079cd 100644
 --- a/recompui/src/base/ui_state.cpp
 +++ b/recompui/src/base/ui_state.cpp
-@@ -35,7 +35,33 @@
+@@ -4,6 +4,7 @@
+ #else
+ #include <SDL2/SDL_video.h>
+ #endif
++#include <algorithm>
+ #include <chrono>
+ 
+ #include "rt64_render_hooks.h"
+@@ -35,7 +36,33 @@
  
  static std::atomic_bool cursor_enabled = true;
  
@@ -980,7 +1005,7 @@ index 277a421..980291d 100644
      recompui::open_choice_prompt(
          "Are you sure you want to quit?",
          "Any progress since your last save will be lost.",
-@@ -389,6 +415,17 @@ public:
+@@ -389,6 +416,17 @@ public:
          // }
  
          document->PullToFront();
@@ -998,6 +1023,116 @@ index 277a421..980291d 100644
          document->Show();
  
          if (!mouse_is_active) {
+@@ -646,13 +684,78 @@ void recompui::activate_mouse() {
+     ui_state->update_focus(true, false);
+ }
+ 
+-void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer* swap_chain_framebuffer) {
++// Conker: in the stereo modes that give each eye half of the screen (side-by-side, cross-eye,
++// top-and-bottom), RT64's present queue shows the UI squashed into both halves, in the game
++// and in the launcher's menus alike. Map the mouse from the half it's in back to the UI's
++// own full-window space, so the pointer acts on what is shown under it. The layout is the
++// one RT64 last presented the UI with, so the mapping always follows what is on screen.
++static void remap_halved_stereo_mouse(SDL_Event& event) {
++    const RT64::RenderHookUILayout layout = RT64::GetRenderHookUILayout();
++    const bool side_by_side = (layout == RT64::RenderHookUILayout::SideBySide);
++    const bool top_and_bottom = (layout == RT64::RenderHookUILayout::TopAndBottom);
++    // Full side by side: the UI is laid out at half the window's width and shown as it is
++    // in each half, so only the half the pointer is in has to be taken out.
++    const bool side_by_side_full = (layout == RT64::RenderHookUILayout::SideBySideFull);
++    if (!side_by_side && !top_and_bottom && !side_by_side_full) {
++        return;
++    }
++
++    int32_t* x = nullptr;
++    int32_t* y = nullptr;
++    Uint32 window_id = 0;
++    switch (event.type) {
++    case SDL_EventType::SDL_MOUSEMOTION:
++        x = &event.motion.x;
++        y = &event.motion.y;
++        window_id = event.motion.windowID;
++        break;
++    case SDL_EventType::SDL_MOUSEBUTTONDOWN:
++    case SDL_EventType::SDL_MOUSEBUTTONUP:
++        x = &event.button.x;
++        y = &event.button.y;
++        window_id = event.button.windowID;
++        break;
++    default:
++        return;
++    }
++
++    // The event's window, or the game's (the UI's only window) when the event doesn't name one.
++    SDL_Window* event_window = SDL_GetWindowFromID(window_id);
++    if (event_window == nullptr) {
++        event_window = window;
++    }
++
++    if (event_window == nullptr) {
++        return;
++    }
++
++    // In the event's units (window points; pixels too, as the process is DPI aware).
++    int width = 0;
++    int height = 0;
++    SDL_GetWindowSize(event_window, &width, &height);
++    if (side_by_side && (width > 1)) {
++        const int half = width / 2;
++        *x = (std::min(*x, 2 * half - 1) % half) * 2;
++    }
++
++    if (side_by_side_full && (width > 1)) {
++        const int half = width / 2;
++        *x = std::min(*x, 2 * half - 1) % half;
++    }
++
++    if (top_and_bottom && (height > 1)) {
++        const int half = height / 2;
++        *y = (std::min(*y, 2 * half - 1) % half) * 2;
++    }
++}
++
++bool draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer* swap_chain_framebuffer) {
+ 
+     apply_background_input_mode();
+ 
+     // Return early if the ui context has been destroyed already.
+     if (!ui_state) {
+-        return;
++        return false;
+     }
+ 
+     // Return to the launcher if no menu is open and the game isn't started.
+@@ -683,6 +786,9 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+     bool all_input_is_disabled = recompinput::all_input_disabled();
+ 
+     while (recompui::try_deque_event(cur_event)) {
++        // Before anything reads the event: mouse events reach RmlUi through more than one
++        // branch below (as mouse or as general input).
++        remap_halved_stereo_mouse(cur_event);
+         bool context_capturing_input = recompui::is_context_capturing_input();
+         bool context_capturing_mouse = recompui::is_context_capturing_mouse();
+ 
+@@ -859,7 +965,8 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+     ui_state->update_primary_input(mouse_moved, non_mouse_interacted);
+     ui_state->update_focus(mouse_moved, non_mouse_interacted);
+ 
+-    if (recompui::is_any_context_shown()) {
++    const bool drew_ui = recompui::is_any_context_shown();
++    if (drew_ui) {
+         if (recompui::is_context_shown(recompui::get_launcher_context_id())) {
+             recompui::update_launcher_menu();
+         }
+@@ -887,6 +994,8 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+         ui_state->context->Render();
+         ui_state->render_interface.end(command_list, swap_chain_framebuffer);
+     }
++
++    return drew_ui;
+ }
+ 
+ void deinit_hook() {
 diff --git a/recompui/src/composites/ui_assign_players_modal.cpp b/recompui/src/composites/ui_assign_players_modal.cpp
 index 5c6b035..42d7142 100644
 --- a/recompui/src/composites/ui_assign_players_modal.cpp
@@ -1734,6 +1869,182 @@ index 296ce0e..193466d 100644
      }
      
      double general::get_joystick_deadzone() {
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+index 4fdf81f..378e4fb 100644
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -95,6 +95,20 @@ namespace recompui {
+             {ultramodern::renderer::HUDRatioMode::Full, "Expand"},
+         };
+ 
++        // Conker: stereoscopic output. "X-view" is the cross-eye side-by-side layout (the
++        // right eye's image on the left), for viewers who cross their eyes or use displays
++        // that swap the sides.
++        static EnumOptionVector stereo_mode_options = {
++            {ultramodern::renderer::StereoMode::Off, "Off"},
++            {ultramodern::renderer::StereoMode::SideBySide, "SideBySide", "Side by side"},
++            {ultramodern::renderer::StereoMode::SideBySideFull, "SideBySideFull", "Side by side (full)"},
++            {ultramodern::renderer::StereoMode::CrossEye, "CrossEye", "Cross-eye (X-view)"},
++            {ultramodern::renderer::StereoMode::Interlaced, "Interlaced"},
++            {ultramodern::renderer::StereoMode::InterlacedReversed, "InterlacedReversed", "Interlaced rev."},
++            {ultramodern::renderer::StereoMode::TopAndBottom, "TopAndBottom", "Top and bottom"},
++            {ultramodern::renderer::StereoMode::LeiaSR, "LeiaSR", "Leia SR (glasses-free)"},
++        };
++
+         static const std::string get_downsampling_details(ultramodern::renderer::Resolution res_option, DownsamplingOption ds_option) {
+             switch (res_option) {
+                 default:
+@@ -177,6 +191,29 @@ namespace recompui {
+ 
+             new_config.ds_option = get_graphics_enum_value<int>(graphics::options::ds_option);
+ 
++            // Conker: the separation slider reads in percent (the description above uses
++            // the same numbers). A configuration saved back when it read as a fraction
++            // (0.05) is brought up to it here, and the slider is corrected with it.
++            //
++            // The migration is keyed on a persisted flag, not the value: 0.5 is a
++            // reachable percent step, and a value test (< 1.0 -> x100) would silently
++            // rewrite a legitimate 0.5% selection into 50% on the next apply.
++            double separation_percent = get_graphics_number_value<double>(graphics::options::stereo_separation_option);
++            if (!get_graphics_bool_value(graphics::options::stereo_separation_percent_schema)) {
++                if ((separation_percent > 0.0) && (separation_percent < 1.0)) {
++                    separation_percent *= 100.0;
++                    get_graphics_config().set_option_value(graphics::options::stereo_separation_option, separation_percent);
++                }
++                get_graphics_config().set_option_value(graphics::options::stereo_separation_percent_schema, true);
++            }
++
++            new_config.stereo_mode_option = get_graphics_enum_value<ultramodern::renderer::StereoMode>(graphics::options::stereo_mode_option);
++            new_config.stereo_separation_option = separation_percent / 100.0;
++            new_config.stereo_convergence_option = get_graphics_number_value<double>(graphics::options::stereo_convergence_option);
++            new_config.stereo_auto_convergence_option = get_graphics_bool_value(graphics::options::stereo_auto_convergence_option);
++            new_config.stereo_gamma_option = get_graphics_number_value<double>(graphics::options::stereo_gamma_option);
++            new_config.stereo_hud_depth_option = get_graphics_number_value<double>(graphics::options::stereo_hud_depth_option);
++
+             ultramodern::renderer::set_graphics_config(new_config);
+         }
+ 
+@@ -359,6 +396,120 @@ namespace recompui {
+                 true
+             );
+ 
++            config.add_enum_option(
++                graphics::options::stereo_mode_option,
++                "3D Stereo",
++                "Renders the game for stereoscopic displays or glasses: side by side, cross-eye (X-view, the swapped layout) or line-interlaced for 3D TVs. The game's screen-space effects (sparks, smoke) are given their 3D depth, while HUD and menus stay on the screen plane."
++                "<br />"
++                "<br />"
++                "Side by side squeezes each eye into half of the screen, as 3D TVs expect. Side by side (full) gives each eye a whole half of the window at its own shape instead: for a 32:9 window (3840 x 1080, two 16:9 eyes) or a VR viewer set to full SBS."
++                "<br />"
++                "<br />"
++                "Leia SR weaves the two images onto a Simulated Reality (glasses-free) display's lenticular panel when one and its runtime are available; otherwise it presents side by side."
++                "<br />"
++                "<br />"
++                "<recomp-color primary>Note: MS Anti-Aliasing is turned off while a 3D mode is active. Leia SR requires the DirectX 12 graphics API.</recomp-color>",
++                stereo_mode_options,
++                ultramodern::renderer::StereoMode::Off
++            );
++
++            {
++                // RT64 turns MSAA off while a 3D mode is active (both eyes would draw into
++                // the same multisampled target), so the control is disabled with it on.
++                config.add_option_disable_dependency(
++                    graphics::options::msaa_option,
++                    graphics::options::stereo_mode_option,
++                    ultramodern::renderer::StereoMode::SideBySide,
++                    ultramodern::renderer::StereoMode::SideBySideFull,
++                    ultramodern::renderer::StereoMode::CrossEye,
++                    ultramodern::renderer::StereoMode::Interlaced,
++                    ultramodern::renderer::StereoMode::InterlacedReversed,
++                    ultramodern::renderer::StereoMode::TopAndBottom,
++                    ultramodern::renderer::StereoMode::LeiaSR
++                );
++            }
++
++            config.add_number_option(
++                graphics::options::stereo_separation_option,
++                "Stereo Separation",
++                "How far apart the eyes' images are at the furthest depth, as a percentage of the screen width (5% by default). Higher values give stronger depth; most displays look best below 10%, but Leia SR panel testers use up to about 34, so the range reaches 40.",
++                0.0, 40.0, 0.5, 1, true, 5.0
++            );
++            {
++                config.add_option_hidden_dependency(
++                    graphics::options::stereo_separation_option,
++                    graphics::options::stereo_mode_option,
++                    ultramodern::renderer::StereoMode::Off
++                );
++            }
++
++            // Internal: records that the separation value has been migrated to the
++            // percent schema (see apply_graphics_config). Hidden from the UI.
++            config.add_bool_option(
++                graphics::options::stereo_separation_percent_schema,
++                "Stereo Separation Percent Schema",
++                "",
++                false,
++                true
++            );
++
++            config.add_number_option(
++                graphics::options::stereo_convergence_option,
++                "Stereo Convergence",
++                "Distance to the plane that sits on the screen, in game world units. Objects nearer than it pop out, ones farther away recede; the depth strength itself comes from the separation. Lower it for close-up scenes, raise it for wide views.",
++                1.0, 2000.0, 5.0, 0, false, 200.0
++            );
++            {
++                config.add_option_hidden_dependency(
++                    graphics::options::stereo_convergence_option,
++                    graphics::options::stereo_mode_option,
++                    ultramodern::renderer::StereoMode::Off
++                );
++            }
++
++            config.add_bool_option(
++                graphics::options::stereo_auto_convergence_option,
++                "Auto Convergence",
++                "Pulls the convergence in automatically, from the scene's nearest geometry, so close-up shots never pop out uncomfortably. The slider above is the ceiling: auto only ever pulls closer. Off by default: with a calibrated setup, set your own convergence and leave this alone.",
++                false,
++                false
++            );
++            {
++                config.add_option_hidden_dependency(
++                    graphics::options::stereo_auto_convergence_option,
++                    graphics::options::stereo_mode_option,
++                    ultramodern::renderer::StereoMode::Off
++                );
++            }
++
++            config.add_number_option(
++                graphics::options::stereo_gamma_option,
++                "3D Gamma",
++                "Brightens the picture in the 3D modes to make up for the light a 3D display and its glasses take away (1.00 leaves it as it is). It lifts the midtones and the shadows while black stays black and white stays white, so nothing gets washed out or clipped. Around 1.20 to 1.30 suits most passive displays.",
++                1.0, 2.0, 0.05, 2, false, 1.0
++            );
++            {
++                config.add_option_hidden_dependency(
++                    graphics::options::stereo_gamma_option,
++                    graphics::options::stereo_mode_option,
++                    ultramodern::renderer::StereoMode::Off
++                );
++            }
++
++            config.add_number_option(
++                graphics::options::stereo_hud_depth_option,
++                "HUD Depth",
++                "Moves the HUD and the game's other 2D overlays (counters, text, the game's own menus) off the screen plane in the 3D modes. Positive values bring them out toward you, negative values push them into the screen, and 0 keeps them on it. At 100% they stand as far in front of the screen as the background is behind it. Fades and other full-screen effects stay on the screen. Ctrl or Alt + Page Up/Page Down also adjust it while playing.",
++                -100.0, 100.0, 5.0, 0, true, 0.0
++            );
++            {
++                config.add_option_hidden_dependency(
++                    graphics::options::stereo_hud_depth_option,
++                    graphics::options::stereo_mode_option,
++                    ultramodern::renderer::StereoMode::Off
++                );
++            }
++
+             return config;
+         }
+     }
 diff --git a/recompui/src/elements/ui_modal.cpp b/recompui/src/elements/ui_modal.cpp
 index b057f46..cfad7f0 100644
 --- a/recompui/src/elements/ui_modal.cpp
@@ -1756,8 +2067,23 @@ index b057f46..cfad7f0 100644
          tabs->set_change_tab_callback([this](int tab_index) {
              this->on_tab_change(tab_index);
          });
+diff --git a/recompui/src/elements/ui_radio.cpp b/recompui/src/elements/ui_radio.cpp
+index 7e5c18d..7629b8a 100644
+--- a/recompui/src/elements/ui_radio.cpp
++++ b/recompui/src/elements/ui_radio.cpp
+@@ -129,6 +129,10 @@ namespace recompui {
+     Radio::Radio(ResourceId rid, Element *parent) : Container(rid, parent, FlexDirection::Row, JustifyContent::FlexStart, Events(EventType::Focus, EventType::Update, EventType::Enable)) {
+         set_gap(24.0f);
+         set_align_items(AlignItems::FlexStart);
++        // Conker: a row of options too wide for its column (the 3D Stereo modes) used to
++        // shrink its buttons under their labels, which then ran into each other. Let it
++        // flow onto another line instead.
++        set_flex_wrap(FlexWrap::Wrap);
+         // enable_focus();
+         set_as_navigation_container(NavigationType::Horizontal);
+     }
 diff --git a/recompui/src/elements/ui_slider.cpp b/recompui/src/elements/ui_slider.cpp
-index 7a50da4..c3d736d 100644
+index 7a50da4..9a53745 100644
 --- a/recompui/src/elements/ui_slider.cpp
 +++ b/recompui/src/elements/ui_slider.cpp
 @@ -44,6 +44,11 @@ namespace recompui {
@@ -1772,15 +2098,25 @@ index 7a50da4..c3d736d 100644
      void Slider::update_circle_position() {
          double ratio = std::clamp((value - min_value) / (max_value - min_value), 0.0, 1.0);
          circle_element->set_left(ratio * 100.0, Unit::Percent);
-@@ -53,7 +58,7 @@ namespace recompui {
+@@ -53,9 +58,16 @@ namespace recompui {
          char text_buffer[32];
  
          if (type == SliderType::Double) {
 -            std::snprintf(text_buffer, sizeof(text_buffer), "%.*f", precision, value);
 +            std::snprintf(text_buffer, sizeof(text_buffer), "%.*f%s", precision, value, suffix.c_str());
          } else if (type == SliderType::Percent) {
-             std::snprintf(text_buffer, sizeof(text_buffer), "%d%%", static_cast<int>(value));
+-            std::snprintf(text_buffer, sizeof(text_buffer), "%d%%", static_cast<int>(value));
++            // Conker: fractions of a percent are allowed (the stereo separation reads
++            // 0.5% steps), so the precision shows when one is set.
++            if (precision > 0) {
++                std::snprintf(text_buffer, sizeof(text_buffer), "%.*f%%", precision, value);
++            }
++            else {
++                std::snprintf(text_buffer, sizeof(text_buffer), "%d%%", static_cast<int>(value));
++            }
          } else {
+             std::snprintf(text_buffer, sizeof(text_buffer), "%d", static_cast<int>(value));
+         }
 diff --git a/recompui/src/elements/ui_slider.h b/recompui/src/elements/ui_slider.h
 index 4d8c41e..da94d42 100644
 --- a/recompui/src/elements/ui_slider.h
@@ -1833,10 +2169,56 @@ index 2c5dc52..9b175f4 100644
  }
  
 diff --git a/recompui/src/renderer/rt64_render_context.cpp b/recompui/src/renderer/rt64_render_context.cpp
-index a7954c7..74c3683 100644
+index a7954c7..1c9ccd6 100644
 --- a/recompui/src/renderer/rt64_render_context.cpp
 +++ b/recompui/src/renderer/rt64_render_context.cpp
-@@ -360,6 +360,10 @@ void renderer::RT64Context::update_screen() {
+@@ -138,6 +138,30 @@ RT64::EnhancementConfiguration::Presentation::Mode to_rt64(ultramodern::renderer
+     }
+ }
+ 
++// Conker: stereoscopy.
++RT64::UserConfiguration::StereoMode to_rt64(ultramodern::renderer::StereoMode mode) {
++    switch (mode) {
++        case ultramodern::renderer::StereoMode::SideBySide:
++            return RT64::UserConfiguration::StereoMode::SideBySide;
++        case ultramodern::renderer::StereoMode::SideBySideFull:
++            return RT64::UserConfiguration::StereoMode::SideBySideFull;
++        case ultramodern::renderer::StereoMode::CrossEye:
++            return RT64::UserConfiguration::StereoMode::CrossEye;
++        case ultramodern::renderer::StereoMode::Interlaced:
++            return RT64::UserConfiguration::StereoMode::Interlaced;
++        case ultramodern::renderer::StereoMode::InterlacedReversed:
++            return RT64::UserConfiguration::StereoMode::InterlacedReversed;
++        case ultramodern::renderer::StereoMode::TopAndBottom:
++            return RT64::UserConfiguration::StereoMode::TopAndBottom;
++        case ultramodern::renderer::StereoMode::LeiaSR:
++            return RT64::UserConfiguration::StereoMode::LeiaSR;
++        default:
++        case ultramodern::renderer::StereoMode::Off:
++        case ultramodern::renderer::StereoMode::OptionCount:
++            return RT64::UserConfiguration::StereoMode::Off;
++    }
++}
++
+ void set_application_user_config(RT64::Application* application, const ultramodern::renderer::GraphicsConfig& config) {
+     switch (config.res_option) {
+         default:
+@@ -177,6 +201,14 @@ void set_application_user_config(RT64::Application* application, const ultramode
+     application->userConfig.refreshRateTarget = config.rr_manual_value;
+     application->userConfig.internalColorFormat = to_rt64(config.hpfb_option);
+     application->userConfig.displayBuffering = RT64::UserConfiguration::DisplayBuffering::Triple;
++
++    // Conker: stereoscopy.
++        application->userConfig.stereoMode = to_rt64(config.stereo_mode_option);
++        application->userConfig.stereoSeparation = config.stereo_separation_option;
++        application->userConfig.stereoConvergence = config.stereo_convergence_option;
++        application->userConfig.stereoAutoConvergence = config.stereo_auto_convergence_option;
++        application->userConfig.stereoGamma = config.stereo_gamma_option;
++        application->userConfig.stereoHudDepth = config.stereo_hud_depth_option;
+ }
+ 
+ ultramodern::renderer::SetupResult map_setup_result(RT64::Application::SetupResult rt64_result) {
+@@ -360,6 +392,10 @@ void renderer::RT64Context::update_screen() {
      app->updateScreen();
  }
  

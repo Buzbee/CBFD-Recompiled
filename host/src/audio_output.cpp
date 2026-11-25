@@ -71,7 +71,8 @@ void conker::audio::queue_samples(int16_t* samples, size_t sample_count) {
     // RDRAM is kept as native-endian 32-bit words, so each stereo frame's two 16-bit
     // samples read back swapped: [i + 1] is the left channel and [i] the right.
     // Scaled by the main volume from the Sound settings (0-100).
-    const float scale = static_cast<float>(recompui::config::sound::get_main_volume()) / (100.0f * 32768.0f);
+    const float scale = conker::frontend::offscreen ? 0.0f :
+        static_cast<float>(recompui::config::sound::get_main_volume()) / (100.0f * 32768.0f);
     if (ultramodern::timeline::enabled()) {
         const uint32_t queued = SDL_GetQueuedAudioSize(device) / (channels * sizeof(float));
         if (queued + sample_count / channels > most_frames) {

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 #include <SDL.h>
@@ -37,6 +38,10 @@ namespace {
 
 // The game window (frontend.cpp).
 extern SDL_Window* window;
+
+// Whether the played camera is parked while a scripted scene draws (stereo.cpp; set by
+// the frame-start hook in render_fixes.cpp). Scripted wipes are left flat.
+extern bool conker_stereo_play_camera_frozen;
 
 namespace {
     // RT64's extended GBI (tools/rt64/include/rt64_extended_gbi.h) for F3DEX2,
@@ -177,6 +182,16 @@ namespace {
 #endif
     }
 
+    // TEMP-DEBUG: CONKER_SPRITE_DEPTH_LOG compares the sprite's 1/w when its enable
+    // command is written (what RT64 receives) with the 1/w still on the stack when
+    // its rectangle is emitted (what the sprite itself was scaled by).
+    gpr sprite_enable_command = 0;
+    float sprite_enable_inv_depth = 0.0f;
+    bool sprite_depth_log() {
+        static const bool on = SDL_getenv("CONKER_SPRITE_DEPTH_LOG") != nullptr;
+        return on;
+    }
+
     // How far past each 4:3 edge sprites are kept, in N64 screen pixels: as far as
     // the window reaches past it (half the frame's width, D_800BE620, for each 4:3
     // width more), and a little more. A fixed 160 fell short on 32:9 screens.
@@ -189,6 +204,35 @@ namespace {
         MEM_W(0, dl) = (int32_t)w0;
         MEM_W(4, dl) = (int32_t)w1;
         dl += 8;
+    }
+
+    // IEEE 754 binary16, for the inverse depth that rides along the enable command.
+    uint32_t float_to_half_bits(float value) {
+        uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        const uint32_t sign = (bits >> 16) & 0x8000;
+        const uint32_t exponent = (bits >> 23) & 0xFF;
+        uint32_t mantissa = bits & 0x7FFFFF;
+        if ((exponent == 0) || (exponent == 0xFF)) {
+            // Zero, subnormal or non-finite: no depth.
+            return sign;
+        }
+        int32_t half_exponent = int32_t(exponent) - 112; // 127 - 15
+        if (half_exponent >= 0x1F) {
+            return sign | 0x7C00;
+        }
+        if (half_exponent <= 0) {
+            return sign;
+        }
+        mantissa += 0x1000; // Round to nearest.
+        if ((mantissa & 0x800000) != 0) {
+            mantissa = 0;
+            half_exponent++;
+            if (half_exponent >= 0x1F) {
+                return sign | 0x7C00;
+            }
+        }
+        return sign | (uint32_t(half_exponent) << 10) | (mantissa >> 13);
     }
 }
 
@@ -237,9 +281,26 @@ extern "C" void conker_widen_light_glow_right(uint8_t* rdram, recomp_context* ct
 // extended GBI there instead (RT64 turns it off at the start of every display
 // list), so the extended rectangle below costs no extra display list space. The
 // sprites are drawn into display lists allocated to fit what the game writes.
+//
+// The sprite's inverse view depth (1/w, computed by func_15144CEC into 0xC8($sp) and
+// used by the game to scale the sprite) rides in the upper half of the enable's
+// second word as a half-float. RT64 uses it to give the sprite the same stereo
+// parallax as the 3D geometry (host/src/widescreen.cpp for the culling those sprites
+// already get). Zero means no depth: the rect stays at zero parallax.
 extern "C" void conker_enable_extended_gbi(uint8_t* rdram, recomp_context* ctx) {
     gpr dl = ctx->r2;
-    put_command(rdram, dl, (rt64_hook_opcode << 24) | rt64_hook_magic, (rt64_hook_op_enable << 28) | rt64_extended_opcode);
+    uint32_t payload = (rt64_hook_op_enable << 28) | rt64_extended_opcode;
+    // TEMP-DEBUG: CONKER_NO_SPRITE_STEREO turns the per-sprite depth off, to compare.
+    static const bool sprite_stereo = SDL_getenv("CONKER_NO_SPRITE_STEREO") == nullptr;
+    const float inv_depth = stack_float(rdram, ctx->r29, 0xC8);
+    if (sprite_stereo && std::isfinite(inv_depth) && (inv_depth > 0.0f)) {
+        payload |= (float_to_half_bits(inv_depth) & 0xFFFF) << 8;
+    }
+    if (sprite_depth_log()) {
+        sprite_enable_command = dl;
+        sprite_enable_inv_depth = std::isfinite(inv_depth) ? inv_depth : 0.0f;
+    }
+    put_command(rdram, dl, (rt64_hook_opcode << 24) | rt64_hook_magic, payload);
 }
 
 // func_15130A9C at 0x15131168: $v0 is where the sprite's G_TEXRECT goes (three
@@ -261,6 +322,16 @@ extern "C" void conker_emit_sprite_texrect(uint8_t* rdram, recomp_context* ctx) 
     uint32_t dsdx = (uint32_t)MEM_W(0x90, sp) & 0xFFFF;
     uint32_t dtdy = (uint32_t)MEM_W(0x8C, sp) & 0xFFFF;
     const uint32_t tile = 0;
+
+    static int sprite_depth_lines = 0;
+    if (sprite_depth_log() && sprite_depth_lines < 2000 && SDL_GetTicks() >= 20000) {
+        sprite_depth_lines++;
+        const float inv_now = stack_float(rdram, sp, 0xC8);
+        std::fprintf(stdout, "[spr] t %u cmd %06X rect (%d %d %d %d) enable %.5f now %.5f\n",
+            (unsigned)SDL_GetTicks(), (uint32_t)sprite_enable_command & 0xFFFFFF, ulx, uly, lrx, lry,
+            (double)sprite_enable_inv_depth, (double)(std::isfinite(inv_now) ? inv_now : 0.0f));
+        std::fflush(stdout);
+    }
 
     gpr dl = ctx->r2;
     put_command(rdram, dl, (rt64_extended_opcode << 24) | g_ex_texrect_v1,
@@ -773,9 +844,77 @@ namespace {
         return (int32_t)value;
     }
 
-    void put_fill(uint8_t* rdram, gpr& dl, int32_t ulx, int32_t uly, int32_t lrx, int32_t lry) {
+    // The enable command carrying the rectangle's inverse view depth (1/w) as a
+    // half-float in its second word, the same payload the sprites' enable carries.
+    // RT64 gives the next rectangle the 3D scene's parallax for that depth, so the
+    // wipe stays on the piece of the picture it closed around (rt64_rdp.h,
+    // DrawCall::rectStereoInvDepth).
+    void put_rect_stereo_depth(uint8_t* rdram, gpr& dl, float inv_depth) {
+        uint32_t payload = (rt64_hook_op_enable << 28) | rt64_extended_opcode;
+        if (inv_depth > 0.0f) {
+            payload |= (float_to_half_bits(inv_depth) & 0xFFFF) << 8;
+        }
+        put_command(rdram, dl, (rt64_hook_opcode << 24) | rt64_hook_magic, payload);
+    }
+
+    // The wipe's depth: the distance to what the camera being played is looking at
+    // (struct108 at D_800DBFF0 looks at +0x2BC from the eye it draws from, +0x2EC;
+    // host/src/mouse_camera.cpp). The circle closes on Conker on deaths and spawns,
+    // and there that look-at point is on him, so it's the point the circle must line
+    // up with in both eyes.
+    //
+    // Not for the scripted wipes (the opening's keyhole): those render through a
+    // camera of their own that no struct108 holds, while the wipe and the game's own
+    // black sprites keep using the played camera where it was left, so no game state
+    // describes the scene inside the hole (measured: the hole's content sits about
+    // 55 units away while the played camera's look-at says 400 and its sprites say
+    // 154). The wipe can only be roughly placed there; CONKER_IRIS_STEREO_DEPTH
+    // overrides the distance for those (55 matches the opening's keyhole).
+    // TEMP-DEBUG: CONKER_NO_IRIS_STEREO leaves the wipe flat, to compare.
+    float iris_stereo_inv_depth(uint8_t* rdram) {
+        static const bool flat = SDL_getenv("CONKER_NO_IRIS_STEREO") != nullptr;
+        static const float forced_depth = [] {
+            const char* value = SDL_getenv("CONKER_IRIS_STEREO_DEPTH");
+            return value != nullptr ? (float)std::atof(value) : 0.0f;
+        }();
+        if (flat) {
+            return 0.0f;
+        }
+        if (forced_depth > 0.0f) {
+            return 1.0f / forced_depth;
+        }
+        // The scripted wipes (the opening's keyhole) render through a camera of their
+        // own; with auto-convergence on, RT64's scripted-rect focus already replaces
+        // their rectangles' depth with the scene's own focus, and with it off the wipe
+        // belongs on the screen plane rather than at the played camera's parked
+        // look-at (the constants above were both wrong for those scenes: 400 vs 55).
+        // CONKER_IRIS_STEREO_DEPTH above stays as the debug override.
+        if (conker_stereo_play_camera_frozen) {
+            return 0.0f;
+        }
+        const gpr camera = (gpr)(int32_t)MEM_W(0, (gpr)(int32_t)0x800DBFF0);
+        if (camera == 0) {
+            return 0.0f;
+        }
+        const float dx = read_float(rdram, camera, 0x2BC) - read_float(rdram, camera, 0x2EC);
+        const float dy = read_float(rdram, camera, 0x2C0) - read_float(rdram, camera, 0x2F0);
+        const float dz = read_float(rdram, camera, 0x2C4) - read_float(rdram, camera, 0x2F4);
+        const float depth = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (!std::isfinite(depth) || depth <= 1.0f) {
+            return 0.0f;
+        }
+        return 1.0f / depth;
+    }
+
+    // A black rectangle, as an extended one (two commands). With a stereo_inv_depth (0 for none), an enable
+    // carrying it goes first (a third command, which the caller's display list must have room for); without
+    // one (negative: the default), the rectangle is drawn as it always was.
+    void put_fill(uint8_t* rdram, gpr& dl, int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, float stereo_inv_depth = -1.0f) {
         if (lrx <= ulx || lry <= uly) {
             return;
+        }
+        if (stereo_inv_depth >= 0.0f) {
+            put_rect_stereo_depth(rdram, dl, stereo_inv_depth);
         }
         put_command(rdram, dl, (rt64_extended_opcode << 24) | g_ex_fillrect_v1, g_ex_origin_none | (g_ex_origin_none << 12));
         put_command(rdram, dl, ((uint32_t)(ulx * 4) << 16) | ((uint32_t)(uly * 4) & 0xFFFF),
@@ -923,7 +1062,10 @@ extern "C" void conker_iris_end(uint8_t* rdram, recomp_context* ctx) {
 
     // Ours: the game's commands but its first, the four black rectangles as extended ones (two commands each), a
     // third command for each quarter made an extended rectangle, the scissor (three, and a pop) and the branch back.
-    gpr dl = begin_wide_dl(rdram, start, ((uint32_t)count - 1) + 4 * 2 + quarter_count + 4 + 1);
+    // Each of those rectangles is also preceded by an enable carrying its stereo depth (put_rect_stereo_depth).
+    const float iris_depth = iris_stereo_inv_depth(rdram);
+    constexpr size_t depth_command_count = 4 + quarter_count;
+    gpr dl = begin_wide_dl(rdram, start, ((uint32_t)count - 1) + 4 * 2 + quarter_count + 4 + 1 + depth_command_count);
     for (size_t i = 1; i < setup_count; i++) {
         put_command(rdram, dl, cmds[i].w0, cmds[i].w1);
     }
@@ -937,10 +1079,10 @@ extern "C" void conker_iris_end(uint8_t* rdram, recomp_context* ctx) {
     int32_t cx = cx4 / 4, cy = cy4 / 4, r = r4 / 4;
     int32_t band_top = std::max(wide.top, cy - r);
     int32_t band_bottom = std::min(wide.bottom, cy + r);
-    put_fill(rdram, dl, wide.left, wide.top, wide.right, band_top);
-    put_fill(rdram, dl, wide.left, band_bottom, wide.right, wide.bottom);
-    put_fill(rdram, dl, wide.left, band_top, std::min(cx - r, wide.right), band_bottom);
-    put_fill(rdram, dl, std::max(cx + r, wide.left), band_top, wide.right, band_bottom);
+    put_fill(rdram, dl, wide.left, wide.top, wide.right, band_top, iris_depth);
+    put_fill(rdram, dl, wide.left, band_bottom, wide.right, wide.bottom, iris_depth);
+    put_fill(rdram, dl, wide.left, band_top, std::min(cx - r, wide.right), band_bottom, iris_depth);
+    put_fill(rdram, dl, std::max(cx + r, wide.left), band_top, wide.right, band_bottom, iris_depth);
 
     for (size_t i = texture_setup; i < quarters; i++) {
         put_command(rdram, dl, cmds[i].w0, cmds[i].w1);
@@ -949,6 +1091,7 @@ extern "C" void conker_iris_end(uint8_t* rdram, recomp_context* ctx) {
         const Command* rect = &cmds[quarters + q * 3];
         bool left_quarter = q == 1 || q == 3;
         if (!left_quarter || cx4 - r4 >= 0) {
+            put_rect_stereo_depth(rdram, dl, iris_depth);
             put_command(rdram, dl, rect[0].w0, rect[0].w1);
             put_command(rdram, dl, rect[1].w0, rect[1].w1);
             put_command(rdram, dl, rect[2].w0, rect[2].w1);
@@ -960,6 +1103,7 @@ extern "C" void conker_iris_end(uint8_t* rdram, recomp_context* ctx) {
         int32_t s = (int16_t)(rect[1].w1 >> 16) + ((new_ulx * dsdx) >> 7);
         uint32_t t = rect[1].w1 & 0xFFFF;
         const uint32_t tile = (rect[0].w1 >> 24) & 0x7;
+        put_rect_stereo_depth(rdram, dl, iris_depth);
         put_command(rdram, dl, (rt64_extended_opcode << 24) | g_ex_texrect_v1,
             tile | (g_ex_origin_none << 3) | (g_ex_origin_none << 15));
         put_command(rdram, dl, ((uint32_t)new_ulx << 16) | (uint32_t)uly(q),

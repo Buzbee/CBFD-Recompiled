@@ -558,6 +558,45 @@ func = "func_15186794"
 before_vram = 0x151872A8
 text = "{ extern void conker_shadow_matrix_group_end(uint8_t*, recomp_context*); conker_shadow_matrix_group_end(rdram, ctx); }"
 
+# Stereoscopy: each camera's setup (func_1515D6D0, which includes its projection
+# matrix load) tags RT64's projection stack with the stereo world ID, so RT64 only
+# gives the camera's projections the stereo shift; menus, FMV and other untagged
+# perspective projections stay flat. The tag becomes the stack's base for the rest of
+# the display list, because the game builds other world projections from the camera
+# outside the setup (host/src/stereo.cpp).
+[[patches.hook]]
+func = "func_1515D6D0"
+before_vram = 0x1515D6D4
+text = "{ extern void conker_stereo_world_begin(uint8_t*, recomp_context*); conker_stereo_world_begin(rdram, ctx); }"
+
+# The shadow's silhouette texture (func_15184FA4) is rendered through a light camera
+# before the decal samples it. Wrap the pass in an untagged projection group so the
+# stereo shift never reaches it: the decal samples the same texture coordinates in
+# both eyes, so an eye-shifted silhouette would read as a false disparity on the
+# ground (host/src/stereo.cpp).
+[[patches.hook]]
+func = "func_15184FA4"
+before_vram = 0x15184FA8
+text = "{ extern void conker_shadow_image_begin(uint8_t*, recomp_context*); conker_shadow_image_begin(rdram, ctx); }"
+
+[[patches.hook]]
+func = "func_15184FA4"
+before_vram = 0x1518544C
+text = "{ extern void conker_shadow_image_end(uint8_t*, recomp_context*); conker_shadow_image_end(rdram, ctx); }"
+
+# The world camera restore (func_1510B7B4, a leaf: after its first instruction, before
+# it reads $a0; and before its jr $ra, after $v0 is set) is tagged explicitly, so it
+# keeps the stereo shift when it runs inside the shadow pass's untagged group.
+[[patches.hook]]
+func = "func_1510B7B4"
+before_vram = 0x1510B7B8
+text = "{ extern void conker_stereo_restore_begin(uint8_t*, recomp_context*); conker_stereo_restore_begin(rdram, ctx); }"
+
+[[patches.hook]]
+func = "func_1510B7B4"
+before_vram = 0x1510B950
+text = "{ extern void conker_stereo_restore_end(uint8_t*, recomp_context*); conker_stereo_restore_end(rdram, ctx); }"
+
 # Widescreen: the circle wipe (spawn, death, level changes) is redrawn with pieces
 # that reach the window's edges (host/src/widescreen.cpp).
 [[patches.hook]]

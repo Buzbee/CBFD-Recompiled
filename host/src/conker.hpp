@@ -220,6 +220,10 @@ namespace conker {
         // The window's size when it opens (main.cpp's --window); 1600 x 900 when 0.
         inline int window_width = 0;
         inline int window_height = 0;
+        // --offscreen (test captures): the window opens beyond the desktop's right edge,
+        // without taking focus or a taskbar button, at exactly its size, and the game is
+        // muted, so a run doesn't get in the way of whoever is using the PC.
+        inline bool offscreen = false;
         // Registers the game with the launcher and sets up the menus.
         void init(recomp::GameEntry& game);
         // The window, renderer, input and error callbacks.

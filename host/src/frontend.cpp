@@ -34,6 +34,10 @@
 
 #include "conker.hpp"
 
+// skip.cpp: the N64 buttons the skip button (Backspace / the controller's right
+// shoulder) presses in port 0 (START in the opening's cutscene sequence, L elsewhere).
+extern uint16_t conker_skip_pad_buttons;
+
 // recompui's launcher shows the first entry (ui_launcher.cpp declares it extern).
 std::vector<recomp::GameEntry> supported_games;
 // The game window, which recompui also uses (ui_state.cpp declares it extern).
@@ -228,8 +232,18 @@ namespace {
 #endif
         const int width = conker::frontend::window_width > 0 ? conker::frontend::window_width : 1600;
         const int height = conker::frontend::window_height > 0 ? conker::frontend::window_height : 900;
-        window = SDL_CreateWindow(conker::program_name, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-            width, height, flags);
+        int x = SDL_WINDOWPOS_CENTERED;
+        int y = SDL_WINDOWPOS_CENTERED;
+        if (conker::frontend::offscreen) {
+            // Not resizable, so Windows keeps a window larger than the screen at its size.
+            flags = (flags & ~uint32_t(SDL_WINDOW_RESIZABLE)) | SDL_WINDOW_SKIP_TASKBAR;
+            SDL_SetHint(SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
+#if defined(_WIN32)
+            x = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 64;
+            y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+#endif
+        }
+        window = SDL_CreateWindow(conker::program_name, x, y, width, height, flags);
         if (window == nullptr) {
             std::fprintf(stderr, "[frontend] SDL_CreateWindow failed: %s\n", SDL_GetError());
             return {};
@@ -837,6 +851,10 @@ namespace {
             read_port(port < count ? controllers[port] : nullptr, recompinput::profiles::get_sp_port_controller_profile_index(port), port == 0,
                 !leap_swap && conker::mouse_camera::stick_turns_camera(port),
                 leap_swap || conker::look_aim::swap_sticks_now(player), conker::look_aim::z_turns_aim(player), buttons, x, y);
+            // The skip button, as the game's own skip input (skip.cpp).
+            if (port == 0) {
+                *buttons |= conker_skip_pad_buttons;
+            }
         }
         return true;
     }

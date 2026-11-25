@@ -4,7 +4,7 @@
 // remappable keyboard/controller input (frontend.cpp) and plays sound
 // (audio_output.cpp); otherwise, or with --headless, it runs with a null renderer,
 // no input and no sound output.
-// Usage: ConkerRecomp [--rom <baserom.us.z64>] [--seconds N] [--headless] [--window WxH] [--data DIR]
+// Usage: ConkerRecomp [--rom <baserom.us.z64>] [--seconds N] [--headless] [--window WxH] [--offscreen] [--data DIR]
 //   --rom PATH   the US ROM (a bare path works too, e.g. a ROM dropped onto the exe);
 //                only needed once, it is then kept with the game's data. The window
 //                build can also load it from the launcher.
@@ -12,6 +12,9 @@
 //   --headless   null renderer, no window, input or sound
 //   --window WxH open the window at this size, e.g. 2520x1080 to try a 21:9 screen
 //                (the window mode, windowed or fullscreen, is still the setting's)
+//   --offscreen  for unattended captures: the window opens beyond the desktop's right
+//                edge, without focus or a taskbar button, at exactly --window's size
+//                (even larger than the screen), and the game is muted
 //   --my-view-only  in a netplay match, show only this machine's players' parts of the split screen
 //   --my-view-ports <players>  replaying a recording with --my-view-only: whose views are shown, e.g. 12
 //                (players 1 and 2), as on a machine with those players (1 by default)
@@ -599,6 +602,9 @@ int main(int argc, char** argv) {
             show_launcher = true; // Return to Launcher's restart: the launcher, whatever Start Game Directly says
         }
 #if defined(CONKER_RT64)
+        else if (std::strcmp(argv[i], "--offscreen") == 0) {
+            conker::frontend::offscreen = true;
+        }
         else if (std::strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
             int width = 0, height = 0;
             if (std::sscanf(argv[++i], "%dx%d", &width, &height) == 2 && width > 0 && height > 0) {
