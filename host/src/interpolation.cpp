@@ -33,7 +33,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
+
+#include <SDL.h>
 
 #include "recomp.h"
 
@@ -71,9 +75,24 @@ namespace {
     // An object: every component interpolated automatically, vertices too (the game
     // bends joints on the CPU), texture coordinates as they are.
     constexpr uint32_t object_group_params = group_params(g_ex_interpolate_decompose, g_ex_component_auto, g_ex_component_auto, g_ex_component_skip);
-    // A shadow: the ground it's drawn on stays where it is (its matrices and vertices as they
-    // are), and only its texture coordinates are interpolated.
-    constexpr uint32_t shadow_group_params = group_params(g_ex_interpolate_simple, g_ex_component_skip, g_ex_component_skip, g_ex_component_interpolate);
+    // A shadow: its vertices are the ground clipped anew every frame and can't be paired,
+    // so only its texture coordinates are interpolated by RT64's fit. Its matrix must be
+    // interpolated too, though: the clipped copy is built in the character's frame, and
+    // skipping the matrix leaves the decal on the game frame's spot while the interpolated
+    // character is part way to the next one. CONKER_SHADOW_MATRIX_LERP=0 restores the old
+    // behaviour.
+    constexpr uint32_t shadow_group_params_skip = group_params(g_ex_interpolate_simple, g_ex_component_skip, g_ex_component_skip, g_ex_component_interpolate);
+    constexpr uint32_t shadow_group_params_lerp = group_params(g_ex_interpolate_simple, g_ex_component_auto, g_ex_component_skip, g_ex_component_interpolate);
+
+    uint32_t shadow_group_params() {
+        // On by default, so the decal moves with the interpolated character.
+        // CONKER_SHADOW_MATRIX_LERP=0 restores the un-interpolated matrix.
+        static const bool matrixLerp = []() {
+            const char* env = SDL_getenv("CONKER_SHADOW_MATRIX_LERP");
+            return (env == nullptr) || (env[0] != '0');
+        }();
+        return matrixLerp ? shadow_group_params_lerp : shadow_group_params_skip;
+    }
 
     void put_command(uint8_t* rdram, gpr& dl, uint32_t w0, uint32_t w1) {
         MEM_W(0, dl) = (int32_t)w0;
@@ -146,6 +165,25 @@ extern "C" void conker_object_matrix_group_end(uint8_t* rdram, recomp_context* c
     ctx->r2 = dl;
 }
 
+// TEMP-DEBUG: CONKER_NO_SHADOWS removes the field/prop shadow decals entirely (their
+// display list is filled with no-ops), to A/B whether a stereo artifact belongs to
+// them. Debugging only: mono looks the same minus the shadows. F9 also toggles them
+// at runtime, so both states can be captured from the same pose.
+bool shadow_group_enabled = true;
+
+bool shadow_draws_enabled() {
+    static const bool forcedOff = SDL_getenv("CONKER_NO_SHADOWS") != nullptr;
+    static bool enabled = true;
+    static bool prevF9 = false;
+    const Uint8* keys = SDL_GetKeyboardState(nullptr);
+    const bool f9 = (keys != nullptr) && (keys[SDL_SCANCODE_F9] != 0);
+    if (f9 && !prevF9) {
+        enabled = !enabled;
+    }
+    prevF9 = f9;
+    return !forcedOff && enabled;
+}
+
 // func_15186794, after its first instruction: $a0 is where it writes its first
 // command, $a1 the shadow's index.
 extern "C" void conker_shadow_matrix_group_begin(uint8_t* rdram, recomp_context* ctx) {
@@ -153,7 +191,12 @@ extern "C" void conker_shadow_matrix_group_begin(uint8_t* rdram, recomp_context*
     gpr dl = ctx->r4;
     shadow_index = shadow;
     shadow_dl_start = dl;
-    put_group(rdram, dl, 0x53480000u | shadow, shadow_group_params);
+    shadow_group_enabled = shadow_draws_enabled();
+    if (!shadow_group_enabled) {
+        return;
+    }
+
+    put_group(rdram, dl, 0x53480000u | shadow, shadow_group_params());
     ctx->r4 = dl;
 }
 
@@ -161,9 +204,17 @@ extern "C" void conker_shadow_matrix_group_begin(uint8_t* rdram, recomp_context*
 // drawn in this one either (see the top): handing back where its commands started drops
 // everything it wrote, the group's commands too.
 extern "C" void conker_shadow_matrix_group_end(uint8_t* rdram, recomp_context* ctx) {
+    // Kept up to date even with the shadows switched off below (the debug toggle), so the
+    // gap check is right when they come back.
     const auto last = shadow_last_drawn.find(shadow_index);
     const bool back_after_gap = last == shadow_last_drawn.end() || game_frames - last->second > 1;
     shadow_last_drawn[shadow_index] = game_frames;
+    if (!shadow_group_enabled) {
+        for (gpr p = shadow_dl_start; p < ctx->r2; p += 4) {
+            MEM_W(0, p) = 0;
+        }
+        return;
+    }
     if (back_after_gap) {
         ctx->r2 = shadow_dl_start;
         return;

@@ -1,4 +1,6 @@
-Conker's Bad Fur Day: Recompiled
+Conker's Bad Fur Day 3D Stereo
+https://github.com/agrofubris/conker-3d-stereo
+3D edition by agrofubris of Conker's Bad Fur Day: Recompiled,
 https://github.com/sciaschi/CBFD-Recompiled
 macOS port by nitrostemp: https://github.com/nitrostemp
 
@@ -22,6 +24,18 @@ macOS: Apple Silicon, macOS 15 or later. The app isn't signed with an Apple
 developer ID, so macOS blocks it the first time: open it once, then in System
 Settings > Privacy & Security choose Open Anyway. Or, in Terminal, run
 xattr -dr com.apple.quarantine ConkerRecomp.app before opening it.
+
+3D
+  Settings > Graphics > 3D Stereo turns on stereoscopic 3D: side by side
+  (half, or full for 32:9 windows and VR viewers set to full SBS), cross-eye, top and bottom, interlaced (line by line, for passive 3D TVs and
+  monitors) or Leia SR (glasses-free, Windows only). Separation sets how strong
+  the depth is, Convergence what sits on the screen plane, HUD Depth where the
+  HUD floats, and 3D Gamma brightens the picture for 3D glasses. Anti-aliasing
+  turns itself off in 3D. While playing, Ctrl + arrows adjust separation and
+  convergence, Ctrl + Page Up/Page Down the HUD depth (Alt for bigger steps).
+  Leia SR needs Leia's SR Platform installed and the D3D12 graphics API; if
+  something goes wrong, start the game with leia_test.cmd, which logs the run
+  to leia-log.txt.
 
 Save states: F5 saves the game as it is, anywhere, F7 loads it back, and F6
 switches between the nine slots. The game's own saves are never touched. More

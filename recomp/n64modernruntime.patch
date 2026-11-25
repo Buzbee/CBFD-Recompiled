@@ -972,6 +972,52 @@ index 5593172..83e0733 100644
  
  if (WIN32)
      add_compile_definitions(NOMINMAX)
+diff --git a/ultramodern/include/ultramodern/config.hpp b/ultramodern/include/ultramodern/config.hpp
+index 2f22456..1e038bb 100644
+--- a/ultramodern/include/ultramodern/config.hpp
++++ b/ultramodern/include/ultramodern/config.hpp
+@@ -57,6 +57,21 @@ namespace ultramodern {
+             Off,
+             OptionCount
+         };
++        // Conker: stereoscopic output modes (see the Graphics tab and RT64's patch).
++        // LeiaSR weaves onto a Simulated Reality (glasses-free) display when one and
++        // its runtime are available; otherwise RT64 presents it as side by side.
++        enum class StereoMode {
++            Off,
++            SideBySide,
++            CrossEye,
++            Interlaced,
++            InterlacedReversed,
++            TopAndBottom,
++            LeiaSR,
++            // Conker: full side by side, each eye a whole half-window picture.
++            SideBySideFull,
++            OptionCount
++        };
+         enum class PresentationMode {
+             Console,
+             SkipBuffering,
+@@ -76,6 +91,19 @@ namespace ultramodern {
+             HighPrecisionFramebuffer hpfb_option;
+             int rr_manual_value;
+             int ds_option;
++            // Conker: stereoscopy. Separation is the background disparity as a fraction
++            // of the screen width (0..0.1 is the comfortable range); convergence is the
++            // distance (world units) of the zero-parallax plane.
++            StereoMode stereo_mode_option = StereoMode::Off;
++            double stereo_separation_option = 0.05;
++            double stereo_convergence_option = 200.0;
++            bool stereo_auto_convergence_option = false;
++            // The gamma lift the stereo modes present with (1 = none): out = in^(1/gamma).
++            double stereo_gamma_option = 1.0;
++            // The HUD's depth in the stereo modes, as a percentage of the separation: 0 keeps
++            // it on the screen plane, positive values bring it out toward the viewer,
++            // negative values push it into the screen.
++            double stereo_hud_depth_option = 0.0;
+ 
+             virtual ~GraphicsConfig() = default;
+ 
 diff --git a/ultramodern/include/ultramodern/input.hpp b/ultramodern/include/ultramodern/input.hpp
 index 1dab1b8..22f09df 100644
 --- a/ultramodern/include/ultramodern/input.hpp

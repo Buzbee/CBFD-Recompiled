@@ -70,6 +70,10 @@ echo ==^> Patching the tools
 call :apply_patch tools/N64Recomp recomp/n64recomp.patch || exit /b 1
 call :apply_patch tools/N64ModernRuntime recomp/n64modernruntime.patch || exit /b 1
 call :apply_patch tools/rt64 recomp/rt64.patch || exit /b 1
+rem Conker: Plume (RT64's graphics layer) copies textures into buffers for the stereo
+rem auto-convergence depth readback.
+call :apply_patch tools/rt64/src/contrib/plume recomp/plume.patch || exit /b 1
+rem Conker: the stereo options in the launcher's Graphics tab (see recomp/README.md).
 call :apply_patch tools/RecompFrontend recomp/recompfrontend.patch || exit /b 1
 rem RmlUi's fix for GCC 15 and later (see build.sh). MSVC doesn't need it, but the patched
 rem file is the same on every system.

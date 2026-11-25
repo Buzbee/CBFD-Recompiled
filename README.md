@@ -1,6 +1,159 @@
-<img width="1360" height="768" alt="image" src="https://github.com/user-attachments/assets/abb979d7-24a5-44f8-98d3-088ba2054a74" />
+# Conker's Bad Fur Day 3D Stereo
 
-# Conker's Bad Fur Day: Recompiled
+**Conker's Bad Fur Day** (N64, 2001) playable on PC in stereoscopic 3D:
+side-by-side (half and full), top-and-bottom, cross-view, interlaced (normal and
+reversed), and Leia SR lenticular panels. It's [agrofubris](https://github.com/agrofubris)'s
+3D edition of sciaschi's native port,
+[CBFD-Recompiled](https://github.com/sciaschi/CBFD-Recompiled), with a true
+per-eye renderer: each eye gets its own camera, not a shifted copy of a flat
+picture. The optional Leia SR loader ships in the zip; without the SR Platform
+installed the mode falls back to side-by-side.
+
+![Outside the Cock and Plucker in the rain, side-by-side 3D](docs/screenshots/cock-and-plucker-rain-sbs.jpg)
+
+*Outside the Cock and Plucker. Half side by side, left eye on the left: view it
+on a 3D display, in a VR viewer set to half SBS, or with the parallel
+free-viewing method. More [below](#screenshots).*
+
+> [!NOTE]
+> **Unofficial fan project.** Not affiliated with or endorsed by Rare, Microsoft,
+> Nintendo or Leia. No game data is included or distributed: you need your own
+> US ROM of the game. See [3D credits](#3d-credits).
+
+> [!IMPORTANT]
+> **Made almost entirely with AI.** Nearly all of the 3D code, debugging and
+> documentation in this build is written by an AI (Anthropic's Claude, through
+> Claude Code), directed, tested and reviewed by a human, agrofubris. If you
+> don't trust code written by AI, you can simply ignore this project. As with
+> anything on the internet, you run it at your own discretion.
+
+## Screenshots
+
+Half side by side (each eye squeezed into its half), left eye on the left.
+Captured at 1920 x 1080, 15 % separation, with Auto Convergence on.
+
+![Birdy the scarecrow and a B pad in Hungover, side-by-side 3D](docs/screenshots/hungover-birdy-sbs.jpg)
+![Conker and the Rareware logo at start-up, side-by-side 3D](docs/screenshots/rareware-logo-sbs.jpg)
+
+## Play in 3 steps (Windows)
+
+1. **Download** the latest `conker-3d-stereo-*-win.zip` from
+   [Releases](https://github.com/agrofubris/conker-3d-stereo/releases) and unzip
+   it anywhere you can write to.
+2. **Run `ConkerRecomp.exe`.** The first time, the launcher asks for your ROM:
+   pick your own US `.z64` of Conker's Bad Fur Day. It's checked and remembered.
+3. **Pick your display format** under Settings > Graphics > 3D Stereo, then
+   **Start Game**.
+
+If Windows says `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install
+Microsoft's Visual C++ Redistributable (x64).
+
+## Displays
+
+| Display | 3D Stereo mode |
+| --- | --- |
+| Passive (polarised, row-interlaced) monitor | `Interlaced` or `Interlaced rev.`, whichever gives correct depth with your glasses |
+| 3D TV / projector, side-by-side | `Side by side` |
+| 32:9 window (3840 x 1080), or a VR viewer set to full SBS | `Side by side (full)` |
+| 3D TV / projector, top-and-bottom | `Top and bottom` |
+| Leia SR glasses-free panel | `Leia SR (glasses-free)` |
+| Cross-eye free viewing | `Cross-eye (X-view)` |
+
+Side by side, top and bottom and cross-eye are the half formats: each eye is
+rendered at the screen's shape and squeezed into its half, and the display
+stretches it back. **Side by side (full)** gives each eye a whole half of the
+window at its own shape instead: a 3840 x 1080 window shows two full 16:9 eyes.
+While a menu is open in any of these modes, the menu is shown flat in both
+halves so it stays readable and clickable.
+
+In a VR headset's virtual screen, start with a much lower Stereo Separation
+(about 2 %): the screen is huge, so the default 5 % puts distant things further
+apart than your eyes.
+
+## Depth
+
+Parallax follows 3D Vision: `parallax = Separation × (1 − Convergence / distance)`.
+
+- **Stereo Separation** (0–40 %): how far apart distant objects are, as a
+  percentage of the screen width. Most glasses-based displays look best under
+  10 %; Leia SR panels want much more.
+- **Stereo Convergence** (game units): the distance that sits on the screen
+  plane. Nearer things pop out, farther ones recede.
+- **Auto Convergence** (off by default): on each camera cut, sets the
+  convergence once for the new shot so close-ups don't pop out too far. It never
+  changes during a shot and never goes past your Stereo Convergence.
+- **HUD Depth** (−100 to 100 %, 0 by default): lifts the HUD and the game's other
+  2D overlays off the screen plane. Positive brings them out toward you; at 100 %
+  they stand as far in front of the screen as the background is behind it.
+  Fades and other full-screen effects stay on the screen.
+- **3D Gamma** (1.00–2.00): brightens the picture for the light 3D glasses take
+  away; around 1.20 to 1.30 suits most passive displays.
+
+While playing, **Ctrl + arrows** adjust separation (left/right) and convergence
+(up/down), **Ctrl + Page Up/Page Down** the HUD depth, and **Alt** instead of Ctrl
+takes bigger steps.
+
+The game's sparks, smoke and other screen-space sprites get the depth of what
+they belong to, and shadows sit on the ground in both eyes. Anti-aliasing (MSAA)
+turns itself off while a 3D mode is on.
+
+## Leia SR
+
+Set **Graphics API** to `D3D12` (Auto almost always picks it, but falls back to
+Vulkan on a few GPUs, and the weave needs D3D12), and install Leia's SR
+Platform. Without either, the mode presents a plain side-by-side picture
+instead, with no missing-DLL popups.
+
+**Not yet verified on an SR panel.** Reports are very welcome: start the game
+with `leia_test.cmd` (next to the executable), which logs the run to
+`leia-log.txt`, and attach that file. `leia_test.cmd noweave` shows the plain
+side-by-side pair, to tell a weave problem apart from everything else.
+
+## Known limits
+
+- Each eye renders the whole frame, so 3D costs about twice the GPU time of 2D.
+  If it stutters, lower the resolution first.
+- 3D builds are Windows only for now. The code builds on Linux and macOS as the
+  regular port does (Leia SR is Windows only), but those builds haven't been
+  tried in 3D. On macOS, Auto Convergence keeps the slider's convergence.
+
+**Tested** on an NVIDIA GeForce RTX 3080, on both D3D12 and Vulkan. **Not tested
+yet:** AMD and Intel graphics cards, and a real Leia SR panel. Reports are very
+welcome in the [issues](https://github.com/agrofubris/conker-3d-stereo/issues).
+
+## 3D credits
+
+The port:
+
+- **sciaschi** and contributors — [CBFD-Recompiled](https://github.com/sciaschi/CBFD-Recompiled),
+  the port this build is based on (see [Credits](#credits) below for everything
+  it builds on).
+
+The 3D edition:
+
+- **[agrofubris](https://github.com/agrofubris)** — the stereoscopic 3D: the
+  per-eye renderer, the sprite, shadow and HUD depth, Auto Convergence, the 3D
+  settings and the Leia SR output; direction, testing and review.
+- **oneup03** — [RT64 3D](https://github.com/oneup03/rt64-3D), whose stereo
+  rendering and Leia SR implementation this follows, and testing and feedback.
+- **bo3b** — [SR-lib](https://github.com/bo3b/SR-lib), the Simulated Reality
+  wrapper used for the optional D3D12 weave.
+- The Leia SR loader follows the Leia work of kandowontu2 and agrofubris in
+  their other ports.
+- **Claude** (Anthropic), through Claude Code — code, debugging and
+  documentation, under agrofubris's direction.
+
+Licence: MIT, the same as the port (see [LICENSE](LICENSE)), covering the code
+only: it grants no rights in the game or its data. The 3D edition's changes are
+© 2026 agrofubris, under the same licence. Conker's Bad Fur Day is © Rare Ltd.;
+this project is not affiliated with Rare, Microsoft, Nintendo or Leia.
+
+---
+
+## About the port
+
+Everything below is the README of CBFD-Recompiled, the port this build is based
+on. Links about building point to this repository, which builds the 3D version.
 
 A native PC port of **Conker's Bad Fur Day** (N64, US version). It's built by
 statically recompiling the game with [N64Recomp](https://github.com/N64Recomp/N64Recomp),
@@ -14,8 +167,10 @@ starting from the [Conker decompilation](https://github.com/mkst/conker). It run
 
 ## Download
 
-Ready-to-play Windows, Linux and macOS (Apple Silicon, macOS 15 or later) builds
-are on the [Releases page](https://github.com/sciaschi/CBFD-Recompiled/releases).
+The 3D builds (Windows) are on [this repository's Releases page](https://github.com/agrofubris/conker-3d-stereo/releases).
+Ready-to-play builds of the regular port for Windows, Linux and macOS (Apple
+Silicon, macOS 15 or later) are on
+[CBFD-Recompiled's Releases page](https://github.com/sciaschi/CBFD-Recompiled/releases).
 Unpack one anywhere, run `ConkerRecomp`, and pick your US ROM in the launcher the
 first time. The packages contain no game data: you still need your own ROM. The
 macOS app isn't signed with an Apple developer ID, so the first time, open it and
@@ -26,6 +181,8 @@ yourself instead, read on.
 
 - Runs natively on Windows (Direct3D 12 or Vulkan), Linux (Vulkan) and macOS
   (Metal), rendered by RT64. Supports higher resolutions, widescreen,
+  stereoscopic 3D (side by side, half or full, cross-eye, top and bottom, interlaced, and
+  Leia SR panels on Windows with Direct3D 12) with automatic convergence,
   anti-aliasing and high frame-rate presentation, with Conker, his shadow and the
   camera interpolated between the game's frames.
 - Widescreen across gameplay, menus, cutscenes (or 4:3 cutscenes, with the
@@ -118,8 +275,8 @@ In a Command Prompt, in the folder you want it in (for example `D:\Games`), with
 the path to your ROM:
 
 ```bat
-git clone --recursive https://github.com/sciaschi/CBFD-Recompiled.git
-cd CBFD-Recompiled
+git clone --recursive https://github.com/agrofubris/conker-3d-stereo.git
+cd conker-3d-stereo
 build.cmd "C:\path\to\your\conker.z64"
 ```
 
@@ -142,8 +299,8 @@ Tested on Ubuntu 24.04 (x86-64). You need a Vulkan driver: Mesa's, which most
 distributions install by default, or NVIDIA's.
 
 ```sh
-git clone --recursive https://github.com/sciaschi/CBFD-Recompiled.git
-cd CBFD-Recompiled
+git clone --recursive https://github.com/agrofubris/conker-3d-stereo.git
+cd conker-3d-stereo
 ./build.sh ~/path/to/your/conker.z64
 ```
 
@@ -174,8 +331,8 @@ of it, as on Linux.
 In Terminal, in the folder you want it in, with the path to your ROM:
 
 ```sh
-git clone --recursive https://github.com/sciaschi/CBFD-Recompiled.git
-cd CBFD-Recompiled
+git clone --recursive https://github.com/agrofubris/conker-3d-stereo.git
+cd conker-3d-stereo
 ./build.sh ~/path/to/your/conker.z64
 ```
 
@@ -249,7 +406,8 @@ the settings' Quit prompt: the program restarts at the launcher.
 - **Settings** (in the launcher, or Esc / the controller's menu button in game)
   has its options by tab: General (deadzone, rumble), Camera (turning, the free
   camera, field of view, aiming with the stick), Mouse & Gyro, Graphics
-  (resolution, aspect ratio, anti-aliasing, frame rate, texture packs), Controls,
+  (resolution, aspect ratio, anti-aliasing, frame rate, 3D stereo modes with separation,
+  convergence, auto convergence, HUD depth and 3D gamma, texture packs), Controls,
   Sound, Achievements and Mods. The tabs scroll sideways when they don't all fit.
 - **Achievements** are the program's own, for reaching the game's scenes (the
   ones its Chapters menu lists), from the first death to the end credits. They're
@@ -492,6 +650,10 @@ Bug reports, fixes and patches are welcome: see [CONTRIBUTING.md](CONTRIBUTING.m
   [RecompFrontend](https://github.com/N64Recomp/RecompFrontend) by Wiseguy and
   contributors.
 - [RT64](https://github.com/rt64/rt64) by Darío and contributors.
+- [oneup03](https://github.com/oneup03) — [rt64-3D](https://github.com/oneup03/rt64-3D),
+  the reference for stereoscopic rendering and the Leia SR weaving integration.
+- [bo3b](https://github.com/bo3b) — [SR-lib](https://github.com/bo3b/SR-lib), the Leia
+  SR weaver wrapper vendored as the `libs/SR-lib` submodule.
 - [ConkerBFDReloaded](https://github.com/DahSidiAbdallah/ConkerBFDReloaded) by
   dahmedvall95, whose widescreen pause background led to this project's.
 - The mod headers follow the
@@ -521,6 +683,8 @@ their own licenses, and a build combines them:
   ([github.com/BanjoRecomp/BanjoRecomp](https://github.com/BanjoRecomp/BanjoRecomp),
   `.github/macos/ld64`) and is under the GPL, version 3, as that is. It's only
   used to build, and isn't part of the program.
+- The proprietary Leia SR (Simulated Reality) SDK is not distributed here (see
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 The game itself is not included and not covered by them.
 
