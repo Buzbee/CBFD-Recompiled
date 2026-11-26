@@ -37,7 +37,7 @@ Captured at 1920 x 1080, 15 % separation, with Auto Convergence on.
 
 ## Play in 3 steps (Windows)
 
-1. **Download** the latest `conker-3d-stereo-*-win.zip` from
+1. **Download** the latest `ConkerRecompiled-*.zip` from
    [Releases](https://github.com/agrofubris/conker-3d-stereo/releases) and unzip
    it anywhere you can write to.
 2. **Run `ConkerRecomp.exe`.** The first time, the launcher asks for your ROM:
